@@ -30,7 +30,9 @@ from dataclasses import dataclass
 # You can customize these values or load from a config file
 
 # Bridge IP - can be set to None for auto-discovery
-BRIDGE_IP = None  # Example: "192.168.1.100"
+# 1) from environnement
+bridge_ip = os.getenv("BRIDGE_IP") or os.getenv("HUE_BRIDGE_IP")
+
 
 # Path to store bridge connection info
 CONFIG_DIR = os.path.expanduser("~/.hue-mcp")
@@ -63,19 +65,20 @@ async def hue_lifespan(server: FastMCP) -> AsyncIterator[HueContext]:
     os.makedirs(CONFIG_DIR, exist_ok=True)
     
     # Load saved config if it exists
-    bridge_ip = BRIDGE_IP
+    bridge_ip = os.getenv("BRIDGE_IP") or os.getenv("HUE_BRIDGE_IP")
+    logger.info(f"Using bridge_ip={bridge_ip}")
     bridge_username = None
     
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, 'r') as f:
                 config = json.load(f)
-                bridge_ip = config.get('bridge_ip', bridge_ip)
+                # 2) si pas d’ENV, on prend le bridge_ip du fichier
+                bridge_ip = bridge_ip or config.get('bridge_ip')
                 bridge_username = config.get('username')
-                logger.info(f"Loaded configuration from {CONFIG_FILE}")
+                logger.info(f"Loaded configuration from {CONFIG_FILE} (bridge_ip={bridge_ip})")
         except Exception as e:
-            logger.error(f"Error loading config: {e}")
-    
+            logger.error(f"Error loading config: {e}")    
     # Initialize Bridge
     try:
         # If no IP specified, attempt discovery
