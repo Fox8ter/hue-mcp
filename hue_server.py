@@ -1055,28 +1055,42 @@ for typical home use.
 if __name__ == "__main__":
     import uvicorn
     import argparse
-    
+
+    # Valeurs par défaut inchangées pour l'exécution locale
+    default_host = os.getenv("MCP_HOST", "127.0.0.1")
+    default_port = int(os.getenv("MCP_PORT", "8080"))
+
     parser = argparse.ArgumentParser(description="Philips Hue MCP Server")
-    parser.add_argument("--port", type=int, default=8080, help="Port to run the server on")
-    parser.add_argument("--host", type=str, default="127.0.0.1", help="Host to bind the server to")
-    parser.add_argument("--log-level", type=str, default="info", 
+    parser.add_argument("--port", type=int, default=default_port, help="Port to run the server on")
+    parser.add_argument("--host", type=str, default=default_host, help="Host to bind the server to")
+    parser.add_argument("--log-level", type=str, default="info",
                         choices=["debug", "info", "warning", "error", "critical"],
                         help="Logging level")
     args = parser.parse_args()
-    
+
     # Set up logging level
     log_level = getattr(logging, args.log_level.upper())
     logging.getLogger("hue-mcp").setLevel(log_level)
-    
+
     print(f"Starting Philips Hue MCP Server on {args.host}:{args.port}")
     print("Press Ctrl+C to stop the server")
-    
-    # Run the server using mcp.run() or manually with Uvicorn
-    # mcp.run(host=args.host, port=args.port)  # Use this for direct execution
-    
-    # Or use Uvicorn for more control
+
+    # Récupère l'app SSE déjà fournie par FastMCP
+    app = mcp.sse_app()
+
+    # (Optionnel) petit healthcheck HTTP
+    try:
+        from fastapi import FastAPI
+        if isinstance(app, FastAPI):
+            @app.get("/healthz")
+            def healthz():
+                return {"status": "ok"}
+    except Exception:
+        pass
+
+    # Lance Uvicorn
     uvicorn.run(
-        mcp.sse_app(),
+        app,
         host=args.host,
         port=args.port,
         log_level=args.log_level
