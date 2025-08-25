@@ -20,7 +20,7 @@ import logging
 import uuid
 import inspect
 import asyncio
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union, get_type_hints, get_origin, get_args
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -612,6 +612,42 @@ After explaining the scheduling capabilities, suggest some useful lighting sched
 for typical home use.
 """
 
+# --- JSON Schema helpers for tools/list ---
+
+def python_type_to_schema(t):
+    origin, args = get_origin(t), get_args(t)
+    if t is str:
+        return {"type": "string"}
+    if t is int:
+        return {"type": "integer"}
+    if t is float:
+        return {"type": "number"}
+    if t is bool:
+        return {"type": "boolean"}
+    if origin in (list, List, tuple, Tuple):
+        item_t = args[0] if args else Any
+        return {"type": "array", "items": python_type_to_schema(item_t)}
+    if origin in (dict, Dict):
+        return {"type": "object"}
+    if origin is Union:
+        return {"anyOf": [python_type_to_schema(a) for a in args]}
+    return {"type": "string"}
+
+def build_schema_from_signature(fn):
+    hints = get_type_hints(fn)
+    sig = inspect.signature(fn)
+    properties, required = {}, []
+    for name, p in sig.parameters.items():
+        if name == "ctx":
+            continue
+        properties[name] = python_type_to_schema(hints.get(name, str))
+        if p.default is inspect._empty:
+            required.append(name)
+    schema = {"type": "object", "properties": properties}
+    if required:
+        schema["required"] = required
+    return schema
+
 # --- HTTP Streamable adapter (POST/GET /mcp) ---
 
 GLOBAL_HUE_CTX: Optional[HueContext] = None
@@ -719,16 +755,26 @@ def build_http_app() -> FastAPI:
             method = msg.get("method")
             params = msg.get("params") or {}
 
+            # initialize: renvoie la version demandée
             if method == "initialize":
+                requested = (params or {}).get("protocolVersion") or "2025-03-26"
                 return _rpc_result(mid, {
-                    "protocolVersion": "2025-03-26",
+                    "protocolVersion": requested,
                     "capabilities": {"tools": True, "prompts": True}
                 })
 
+            # tools/list: inclut inputSchema
             if method in ("tools/list", "tool/list"):
-                tools = [{"name": name, "description": (fn.__doc__ or "").strip()} for name, fn in TOOL_REGISTRY.items()]
+                tools = []
+                for name, fn in TOOL_REGISTRY.items():
+                    tools.append({
+                        "name": name,
+                        "description": (fn.__doc__ or "").strip(),
+                        "inputSchema": build_schema_from_signature(fn),
+                    })
                 return _rpc_result(mid, {"tools": tools})
 
+            # tools/call
             if method in ("tools/call", "tool/call"):
                 name = params.get("name")
                 arguments = params.get("arguments") or {}
@@ -754,10 +800,12 @@ def build_http_app() -> FastAPI:
                     logger.exception("tool call failed")
                     return _rpc_error(mid, -32000, f"Tool '{name}' error: {e}")
 
+            # prompts/list
             if method == "prompts/list":
                 prompts = [{"name": name, "description": (fn.__doc__ or "").strip()} for name, fn in PROMPT_REGISTRY.items()]
                 return _rpc_result(mid, {"prompts": prompts})
 
+            # prompts/get
             if method == "prompts/get":
                 name = params.get("name")
                 fn = PROMPT_REGISTRY.get(name)
@@ -765,7 +813,6 @@ def build_http_app() -> FastAPI:
                     return _rpc_error(mid, -32601, f"Unknown prompt '{name}'")
                 try:
                     text = fn()
-                    # contenu simple (string) — la plupart des clients MCP acceptent ce format
                     return _rpc_result(mid, {"name": name, "messages": [{"role": "system", "content": text}]})
                 except Exception as e:
                     logger.exception("prompt get failed")
@@ -795,7 +842,7 @@ def build_http_app() -> FastAPI:
         session_id = str(uuid.uuid4())
 
         async def ping_stream():
-            yield f"data: {json.dumps({'jsonrpc':'2.0','method':'notifications/ping','params':{}})}\n\n"
+            yield f"data: {{\"jsonrpc\":\"2.0\",\"method\":\"notifications/ping\",\"params\":{{}}}}\n\n"
             while True:
                 await asyncio.sleep(25)
                 yield f": keepalive\n\n"
