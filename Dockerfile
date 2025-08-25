@@ -1,7 +1,7 @@
 # Dockerfile
 FROM python:3.12-slim
 
-# OS deps (optionnel mais utile pour debug/ssl)
+# OS deps (utile pour debug/ssl)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates tzdata curl && rm -rf /var/lib/apt/lists/*
 
@@ -9,9 +9,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 RUN mkdir -p /root/.hue-mcp
 
-# Installer les deps Python annoncées dans le README
-# (phue pour Hue local + mcp pour le protocole)
-RUN pip install --no-cache-dir phue mcp
+# Dépendances Python (phue + mcp existants) + FastAPI/uvicorn pour HTTP streamable
+RUN pip install --no-cache-dir phue mcp fastapi "uvicorn[standard]"
 
 # Copier le serveur
 COPY hue_server.py /app/hue_server.py
@@ -24,5 +23,5 @@ ENV MCP_PORT=8888
 
 EXPOSE 8888
 
-# Lancer le serveur (log plus verbeux si besoin)
+# Lancer le serveur (respecte MCP_HOST/MCP_PORT via l'env)
 CMD ["bash", "-lc", "python /app/hue_server.py --host ${MCP_HOST} --port ${MCP_PORT}"]
