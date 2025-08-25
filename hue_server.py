@@ -12,6 +12,8 @@ Env:
   MCP_HOST (default 0.0.0.0)
   MCP_PORT (default 8080)
   ALLOWED_ORIGINS="https://n8n.example.com,https://autre.origine"
+  MCP_SERVER_NAME="Philips Hue Controller MCP"
+  MCP_SERVER_VERSION="1.0.0"
 """
 
 import json
@@ -755,12 +757,21 @@ def build_http_app() -> FastAPI:
             method = msg.get("method")
             params = msg.get("params") or {}
 
-            # initialize: renvoie la version demandée
+            # initialize: version demandée + capabilities objets + serverInfo
             if method == "initialize":
                 requested = (params or {}).get("protocolVersion") or "2025-03-26"
+                server_name = os.getenv("MCP_SERVER_NAME", "Philips Hue Controller MCP")
+                server_version = os.getenv("MCP_SERVER_VERSION") or os.getenv("MCP_VERSION") or "1.0.0"
                 return _rpc_result(mid, {
                     "protocolVersion": requested,
-                    "capabilities": {"tools": True, "prompts": True}
+                    "capabilities": {
+                        "tools": {},     # objets (pas booléens) pour n8n
+                        "prompts": {}
+                    },
+                    "serverInfo": {
+                        "name": server_name,
+                        "version": server_version
+                    }
                 })
 
             # tools/list: inclut inputSchema
@@ -817,6 +828,10 @@ def build_http_app() -> FastAPI:
                 except Exception as e:
                     logger.exception("prompt get failed")
                     return _rpc_error(mid, -32000, f"Prompt '{name}' error: {e}")
+
+            # resources/list (stub vide pour compat)
+            if method == "resources/list":
+                return _rpc_result(mid, {"resources": []})
 
             return _rpc_error(mid, -32601, f"Unknown method '{method}'")
 
